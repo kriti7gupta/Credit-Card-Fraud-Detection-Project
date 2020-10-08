@@ -1,0 +1,376 @@
+---
+title: "Credit Card Fraud Detection Report"
+author: "Kriti Gupta"
+date: "08/10/2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning=FALSE, echo = FALSE, message = FALSE, error = FALSE)
+```
+
+```{r}
+# Install all needed libraries if it is not present
+
+if(!require(tidyverse)) install.packages("tidyverse") 
+if(!require(kableExtra)) install.packages("kableExtra")
+if(!require(tidyr)) install.packages("tidyr")
+if(!require(tidyverse)) install.packages("tidyverse")
+if(!require(stringr)) install.packages("stringr")
+if(!require(ggplot2)) install.packages("ggplot2")
+if(!require(dplyr)) install.packages("dplyr")
+if(!require(caret)) install.packages("caret")
+if(!require(e1071)) install.packages("e1071")
+if(!require(class)) install.packages("class")
+if(!require(ROCR)) install.packages("ROCR")
+if(!require(randomForest)) install.packages("randomForest")
+if(!require(PRROC)) install.packages("PRROC")
+if(!require(reshape2)) install.packages("reshape2")
+if(!require(corrplot)) install.packages("corrplot")
+```
+```{r}
+# Loading all needed libraries
+
+library(dplyr)
+library(tidyverse)
+library(kableExtra)
+library(tidyr)
+library(ggplot2)
+library(caret)
+library(e1071)
+library(class)
+library(ROCR)
+library(randomForest)
+library(PRROC)
+library(reshape2)
+library(rstudioapi)
+library(corrplot)
+```
+\newpage
+# Introduction
+
+It is important that credit card companies are able to recognize fraudulent credit card transactions so that customers are not charged for items that they did not purchase. According to creditcards.com, there was over £300m in fraudulent credit card transactions in the UK in the first half of 2016, with banks preventing over £470m of fraud in the same period. The data shows that credit card fraud is rising, so there is an urgent need to continue to develop new, and improve current, fraud detection methods.
+
+Using this dataset, we will use machine learning to develop a model that attempts to predict whether or not a transaction is fraudlent.The datasets contains transactions made by credit cards in September 2013 by european cardholders. 
+
+Due to imbalancing nature of the data, many observations could be predicted as False Negative, in this case Legal Transactions instead of Fraudolent Transaction. For example, a model that predict always **0** (Legal) can archieve an Accuracy of **99.8**. For that reason, the metric used for measuring the score is the **Area Under The Precision-Recall Curve (AUCPR)** instead of the traditional AUC curve. A desiderable result is an AUCPR at least greater than **0.75**.
+
+For archieving the task of classifying credit card fraud detection, they are trained several algorithms such as Naive Bayes Classifier, Logistic Regression,KNN,Random Forest.
+
+In this analysis, a Random Forest model is capable of an AUCPR of **0.768** and Logistic Regression of **0.812**.
+
+# Exploratory Data Analysis
+
+## The Dataset
+
+```{r}
+## Loading the dataset
+options(digits = 5)
+creditcard <- read.csv("creditcard.csv")
+```
+This dataset presents transactions that occurred in two days, where we have 492 frauds out of 284,807 transactions. The dataset is highly unbalanced, the positive class (frauds) account for 0.172% of all transactions.
+It contains only numerical input variables which are the result of a PCA transformation. Features V1, V2, … V28 are the principal components obtained with PCA.
+Feature ‘Class’ is the response variable and it takes value 1 in case of fraud and 0 otherwise.
+
+**Dimensions**
+
+```{r}
+# Check dimensions
+data.frame("Length" = nrow(creditcard), "Columns" = ncol(creditcard)) %>%
+kable() %>%
+   kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"),
+                 position = "center",
+                 font_size = 10,
+                 full_width = FALSE)
+```
+**Imbalanced Dataset**
+
+This is a very imbalanced dataset.In this case, only **492** transactions are frauds, represented by **1** and **284315** are not, represented by **0**. 
+
+```{r}
+imbalanced <- data.frame(creditcard)
+imbalanced$Class = ifelse(creditcard$Class == 0, 'Legal', 'Fraud') %>% as.factor()
+```
+
+```{r, fig.height = 7}
+# Visualize the proportion between classes
+imbalanced %>%
+  ggplot(aes(Class)) +
+  theme_minimal()  +
+  geom_bar() +
+  scale_x_discrete() +
+  scale_y_continuous(labels = scales::comma) +
+  labs(title = "Proportions between Legal and Frauds Transactions",
+        x = "Class",
+        y = "Frequency")
+```
+
+**Check for NAs**
+There are no NA values in the data.
+```{r}
+apply(creditcard, 2, function(x) sum(is.na(x)))
+```
+\newpage
+
+**Correlations between variables**
+
+```{r fig.align="center", fig.height = 7, fig.width = 7,}
+creditcard_copy <- creditcard
+creditcard_copy$Class <- as.factor(creditcard_copy$Class)
+creditcard_copy <- creditcard_copy %>% select(-Time)
+creditcard_copy$Class <- as.numeric(creditcard_copy$Class)
+corr_plot <- corrplot(cor(creditcard_copy), method = "circle", type = "upper")
+```
+The correlation matrix graphically gives us an idea of how features correlate with each other.
+We can clearly see that most of the features do not correlate to other features but there are some features that either has a positive or a negative correlation with each other. For example, V2 and V5 are highly negatively correlated with the feature called Amount. We also see some correlation with V20 and Amount. 
+
+\newpage
+# Data Pre-Processing
+
+This involves 2 steps: 
+
+1. Remove the "Time" column from the dataset. 
+2. Split the dataset into train and test.
+   If you train the network more, then you will get a higher accuracy with your testing sample . By testing 40% of data we are     not overtraining as we can test more data. 
+   
+```{r}
+# Set seed for reproducibility
+set.seed(1234)
+
+creditcard$Class <- as.factor(creditcard$Class)
+creditcard <- creditcard %>% select(-Time)
+
+# Split the dataset into train, test dataset and cv
+train_index <- createDataPartition(
+  y = creditcard$Class, 
+  p = .6, 
+  list = FALSE
+)
+train <- creditcard[train_index,]
+test_cv <- creditcard[-train_index,]
+test_index <- createDataPartition(
+  y = test_cv$Class, 
+  p = .5, 
+  list = FALSE)
+test <- test_cv[test_index,]
+cv <- test_cv[-test_index,]
+rm(train_index, test_index, test_cv)
+```
+# Modeling and Analysis
+
+## Model 1 - Naive Baseline Algorithm
+
+This model always predicts class as "Legal" transaction. Accuracy is **99.8** because the data is imbalanced. But AUCPR is **0**.
+
+```{r}
+baseline_model <- data.frame(creditcard)
+# Set Class al to Legal (0)
+baseline_model$Class = factor(0, c(0,1))
+# Make predictions
+pred <- prediction(
+  as.numeric(as.character(baseline_model$Class)),as.numeric(as.character(creditcard$Class))
+)
+# Compute the AUC and AUCPR
+auc_val_baseline <- performance(pred, "auc")
+auc_plot_baseline <- performance(pred, 'sens', 'spec')
+aucpr_plot_baseline <- performance(pred, "prec", "rec")
+
+# Create a dataframe 'results' that contains all metrics 
+# obtained by the trained models
+results <- data.frame(
+  Model = "Naive Baseline ", 
+  AUC = auc_val_baseline@y.values[[1]],
+  AUCPR = 0
+)
+# Show results on a table
+results %>% 
+  kable() %>%
+  kable_styling(
+    bootstrap_options = 
+      c("striped", "hover", "condensed", "responsive"),
+      position = "center",
+      font_size = 10,
+      full_width = FALSE
+)
+```
+
+
+## Model 2 - Naive Bayes Algorithm
+
+The performance improves a little but is still a poor result according to the metric of interest.
+
+```{r}
+set.seed(1234)
+# Build the model with Class as target and all other variables
+# as predictors
+naive_model <- naiveBayes(Class ~ ., data = train, laplace=1)
+# Predict
+predictions <- predict(naive_model, newdata=test)
+# Compute the AUC and AUCPR for the Naive Model
+pred <- prediction(as.numeric(predictions) , test$Class)
+auc_val_naive <- performance(pred, "auc")
+auc_plot_naive <- performance(pred, 'sens', 'spec')
+aucpr_plot_naive <- performance(pred, "prec", "rec")
+aucpr_val_naive <- pr.curve(
+  scores.class0 = predictions[test$Class == 1], 
+  scores.class1 = predictions[test$Class == 0],
+  curve = T,  
+  dg.compute = T
+)
+# Adding the respective metrics to the results dataset
+results <- results %>% add_row(
+  Model = "Naive Bayes", 
+  AUC = auc_val_naive@y.values[[1]],
+  AUCPR = aucpr_val_naive$auc.integral
+)
+# Show results on a table
+results %>%
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed","responsive"),
+      position = "center",
+      font_size = 10,
+      full_width = FALSE)
+```
+
+## Model 3 - Logistic Regression
+
+It is typically a good idea to start out with a simple model and move on to more complex ones. A simple logistic regression model achieved nearly 100% accuracy.
+
+```{r}
+set.seed(1234)
+glm_model <- glm(Class ~ ., data = train, family = "binomial")
+
+predictions <- predict(glm_model, newdata=test)
+
+pred <- prediction(as.numeric(predictions) , test$Class)
+
+auc_val_glm <- performance(pred, "auc")
+
+auc_plot_glm  <- performance(pred, 'sens', 'spec')
+aucpr_plot_glm  <- performance(pred, "prec", "rec")
+
+aucpr_val_glm  <- pr.curve(
+  scores.class0 = predictions[test$Class == 1], 
+  scores.class1 = predictions[test$Class == 0],
+  curve = T,  
+  dg.compute = T
+)
+
+# Adding the respective metrics to the results dataset
+
+results <- results %>% add_row(
+  Model = "Logistic Regression", 
+  AUC = auc_val_glm@y.values[[1]],
+  AUCPR = aucpr_val_glm$auc.integral
+)
+
+# Show results on a table
+
+results %>%
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed","responsive"),
+                position = "center",
+                font_size = 10,
+                full_width = FALSE) 
+```
+
+## Model 4 - K Nearest Neighbours
+A KNN Model is used to achieve significant improvement in respect to baseline models in regard of AUCPR. We use default value of k = 5.
+
+```{r}
+# Set seed 1234 for reproducibility
+set.seed(1234)
+# Build a KNN Model with Class as Target and all other
+# variables as predictors. k is set to 5
+knn_model <- knn(train[,-30], test[,-30], train$Class, k=5, prob = TRUE)
+# Compute the AUC and AUCPR for the KNN Model
+pred <- prediction(
+  as.numeric(as.character(knn_model)),                                   as.numeric(as.character(test$Class))
+)
+auc_val_knn <- performance(pred, "auc")
+auc_plot_knn <- performance(pred, 'sens', 'spec')
+aucpr_plot_knn <- performance(pred, "prec", "rec")
+aucpr_val_knn <- pr.curve(
+  scores.class0 = knn_model[test$Class == 1], 
+  scores.class1 = knn_model[test$Class == 0],
+  curve = T,  
+  dg.compute = T
+)
+# Adding the respective metrics to the results dataset
+results <- results %>% add_row(
+  Model = "K-Nearest Neighbors ", 
+  AUC = auc_val_knn@y.values[[1]],
+  AUCPR = aucpr_val_knn$auc.integral
+)
+# Show results on a table
+results %>%
+   kable() %>%
+   kable_styling(bootstrap_options = c("striped", "hover", "condensed",  "responsive"),
+       position = "center",
+       font_size = 10,
+       full_width = FALSE)
+```
+
+## Model 5 - Random Forest
+
+The ensemble methods are capable of a significant increase in performance.
+
+ 
+```{r}
+set.seed(1234)
+# Build a Random Forest Model with Class as Target and all other
+# variables as predictors. The number of trees is set to 100
+rf_model <- randomForest(Class ~ ., data = train, ntree = 100)
+# Get the feature importance
+feature_imp_rf <- data.frame(importance(rf_model))
+# Make predictions based on this model
+predictions <- predict(rf_model, newdata=test)
+# Compute the AUC and AUPCR
+pred <- prediction(
+  as.numeric(as.character(predictions)),                                 as.numeric(as.character(test$Class))
+)
+auc_val_rf <- performance(pred, "auc")
+auc_plot_rf <- performance(pred, 'sens', 'spec')
+aucpr_plot_rf <- performance(pred, "prec", "rec", curve = T,  dg.compute = T)
+aucpr_val_rf <- pr.curve(scores.class0 = predictions[test$Class == 1], scores.class1 = predictions[test$Class == 0],curve = T,  dg.compute = T)
+
+
+# Adding the respective metrics to the results dataset
+results <- results %>% add_row(
+  Model = "Random Forest",
+  AUC = auc_val_rf@y.values[[1]],
+  AUCPR = aucpr_val_rf$auc.integral)
+# Show results on a table
+results %>%
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed",           "responsive"),
+      position = "center",
+      font_size = 10,
+      full_width = FALSE)
+# Show feature importance on a table
+feature_imp_rf %>%
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed",           "responsive"),
+      position = "center",
+      font_size = 10,
+      full_width = FALSE)
+```
+It is interesting to compare variable importances of the RF model with the variables identified earlier as correlated with the “Class” variable. The top 3 most important variables in the RF model were also the ones which were most correlated with the “Class” variable. Especially for large datasets, this means we could save disk space and computation time by only training the model on the most correlated/important variables, sacrificing a bit of model accuracy.
+
+\newpage
+# Results
+
+This is the summary results for all the models built.
+
+```{r}
+# Shows the results
+results %>% 
+   kable() %>%
+   kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"),
+             position = "center",
+             font_size = 10,
+             full_width = FALSE)
+```
+# Conclusion
+This project has explored the task of identifying fraudlent transactions based on a dataset of anonymised features. It has been shown that even a very simple logistic regression model can achieve good recall, while a much more complex Random Forest model improves upon logistic regression in terms of AUC. For future improvements there are more models which can improve on both fronts such as XGBoost and GBM.
+Techniques like SMOTE which help in sampling high-dimensional and imbalanced datasets like this one, can also be used.
